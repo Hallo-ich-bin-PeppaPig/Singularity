@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: singularity-qwen
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn --workers 1 --threads 8 --timeout 120 --access-logfile - --error-logfile - app:app
+    healthCheckPath: /health
+    envVars:
+      - key: CLOUDFLARE_ACCOUNT_ID
+        sync: false
+      - key: CLOUDFLARE_API_TOKEN
+        sync: false
+      - key: CF_MODEL
+        value: "@cf/qwen/qwen3.8-27b"
+      - key: RATE_LIMIT_RPM
+        value: "15"
+      - key: MAX_TOKENS
+        value: "1200"
