@@ -54,8 +54,14 @@ def home():
     return send_from_directory(app.root_path, "index.html")
 
 @app.get("/health")
-@app.get("/api/health")
 def health():
+    # Liveness check: the web process is running even before provider credentials are added.
+    configured = bool(CF_ACCOUNT_ID and CF_API_TOKEN)
+    return jsonify({"status": "ok", "service": "singularity", "provider": "Cloudflare Workers AI", "model": CF_MODEL, "configured": configured}), 200
+
+@app.get("/api/health")
+def readiness():
+    # Readiness check: reports whether chat requests can reach the configured provider.
     configured = bool(CF_ACCOUNT_ID and CF_API_TOKEN)
     return jsonify({"status": "ok" if configured else "configuration_required", "service": "singularity", "provider": "Cloudflare Workers AI", "model": CF_MODEL, "configured": configured}), 200 if configured else 503
 
