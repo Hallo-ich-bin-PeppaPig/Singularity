@@ -133,8 +133,9 @@ def chat():
                     upstream.close()
             return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         data = upstream.json()
-        content = data.get("response")
-        if not isinstance(content, str) and data.get("choices"):
+        result_data = data.get("result", data) if isinstance(data, dict) else {}
+        content = result_data.get("response") if isinstance(result_data, dict) else None
+        if not isinstance(content, str) and isinstance(data, dict) and data.get("choices"):
             content = data.get("choices", [{}])[0].get("message", {}).get("content")
         if not isinstance(content, str) or not content.strip():
             app.logger.warning("Cloudflare response did not contain text content")
