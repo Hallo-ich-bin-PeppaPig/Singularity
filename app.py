@@ -19,7 +19,7 @@ CF_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN", "").strip()
 CF_MODEL = os.getenv("CF_MODEL", "@cf/qwen/qwen3.8-27b").strip()
 RATE_LIMIT_RPM = max(1, min(int(os.getenv("RATE_LIMIT_RPM", "15")), 60))
 MAX_TOKENS = max(128, min(int(os.getenv("MAX_TOKENS", "1200")), 4096))
-CF_URL = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/v1/chat/completions" if CF_ACCOUNT_ID else ""
+CF_URL = f"https://api.cloudflare.com/client/v4/accounts/{CF_ACCOUNT_ID}/ai/run/{CF_MODEL}" if CF_ACCOUNT_ID else ""
 
 _hits = defaultdict(deque)
 _hits_lock = threading.Lock()
@@ -96,7 +96,7 @@ def chat():
                 messages.append({"role": role, "content": content[:12000]})
     messages.append({"role": "user", "content": message.strip()})
     wants_stream = payload.get("stream") is True
-    body = {"model": CF_MODEL, "messages": messages, "max_tokens": MAX_TOKENS, "temperature": 0.6, "stream": wants_stream}
+    body = {"messages": messages, "max_tokens": MAX_TOKENS, "temperature": 0.6, "stream": wants_stream}
     try:
         upstream = requests.post(CF_URL, headers={"Authorization": f"Bearer {CF_API_TOKEN}", "Content-Type": "application/json"}, json=body, timeout=(10, 105), stream=wants_stream)
         if upstream.status_code >= 400:
@@ -120,8 +120,8 @@ def chat():
                             break
                         try:
                             event = json.loads(chunk)
-                            delta = event.get("choices", [{}])[0].get("delta", {})
-                            token = delta.get("content")
+                            delta = event.get("choices", [{}])[0].get("delta", {}) if event.get("choices") else {}
+                            token = event.get("response") or delta.get("content")
                             if isinstance(token, str) and token:
                                 yield "data: " + json.dumps({"content": token}, ensure_ascii=False) + "\n\n"
                         except (ValueError, KeyError, IndexError, TypeError):
@@ -133,7 +133,9 @@ def chat():
                     upstream.close()
             return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         data = upstream.json()
-        content = data.get("choices", [{}])[0].get("message", {}).get("content")
+        content = data.get("response")
+        if not isinstance(content, str) and data.get("choices"):
+            content = data.get("choices", [{}])[0].get("message", {}).get("content")
         if not isinstance(content, str) or not content.strip():
             app.logger.warning("Cloudflare response did not contain text content")
             return jsonify({"error": "O provedor retornou uma resposta vazia ou em formato inesperado."}), 502
