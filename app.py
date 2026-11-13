@@ -133,13 +133,43 @@ def chat():
                     upstream.close()
             return Response(stream_with_context(generate()), mimetype="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         data = upstream.json()
-        result_data = data.get("result", data) if isinstance(data, dict) else {}
-        content = result_data.get("response") if isinstance(result_data, dict) else None
-        if not isinstance(content, str) and isinstance(data, dict) and data.get("choices"):
-            content = data.get("choices", [{}])[0].get("message", {}).get("content")
+
+        def extract_text(value):
+            if isinstance(value, str):
+                return value
+            if isinstance(value, list):
+                parts = [extract_text(item) for item in value]
+                return "\\n".join(part for part in parts if isinstance(part, str) and part.strip())
+            if not isinstance(value, dict):
+                return None
+            # Workers AI model responses can use the native {result: {response: ...}}
+            # shape or an OpenAI-compatible {choices: [{message: {content: ...}}]} shape.
+            for key in ("response", "output_text", "text", "content"):
+                if key in value:
+                    found = extract_text(value[key])
+                    if isinstance(found, str) and found.strip():
+                        return found
+            choices = value.get("choices")
+            if isinstance(choices, list) and choices:
+                for choice in choices:
+                    if isinstance(choice, dict):
+                        found = extract_text(choice.get("message") or choice.get("delta") or choice)
+                        if isinstance(found, str) and found.strip():
+                            return found
+            for key in ("result", "output", "message"):
+                if key in value:
+                    found = extract_text(value[key])
+                    if isinstance(found, str) and found.strip():
+                        return found
+            return None
+
+        content = extract_text(data)
         if not isinstance(content, str) or not content.strip():
-            app.logger.warning("Cloudflare response did not contain text content")
-            return jsonify({"error": "O provedor retornou uma resposta vazia ou em formato inesperado."}), 502
+            root_keys = sorted(data.keys()) if isinstance(data, dict) else [type(data).__name__]
+            result_value = data.get("result") if isinstance(data, dict) else None
+            result_keys = sorted(result_value.keys()) if isinstance(result_value, dict) else [type(result_value).__name__]
+            app.logger.warning("Cloudflare response shape was not recognized; root keys=%s result keys=%s", root_keys, result_keys)
+            return jsonify({"error": "O provedor respondeu, mas o formato da resposta ainda não foi reconhecido."}), 502
         return jsonify({"content": content, "model": CF_MODEL, "provider": "Cloudflare Workers AI"})
     except requests.Timeout:
         return jsonify({"error": "O modelo demorou demais para responder. Tente novamente."}), 504
